@@ -1,0 +1,31 @@
+name: Test basic usage - latest-release
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: setup-ko
+        uses: .
+        with:
+          version: latest-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Assert ko is installed
+        run: |
+          echo "Checking ko is available in PATH..."
+          if ! command -v ko > /dev/null 2>&1; then
+            echo "FAIL: ko not found in PATH"
+            exit 1
+          fi
+          echo "PASS: ko is installed"
+          ko version
+      - name: Assert KO_DOCKER_REPO is set
+        run: |
+          echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}"
+          if [ -z "${KO_DOCKER_REPO}" ]; then
+            echo "FAIL: KO_DOCKER_REPO is not set"
+            exit 1
+          fi
+          echo "PASS: KO_DOCKER_REPO is set to ${KO_DOCKER_REPO}"

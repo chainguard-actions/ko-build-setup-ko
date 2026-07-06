@@ -1,0 +1,95 @@
+name: 'Setup ko'
+description: 'Install and authorize ko'
+branding:
+  icon: box
+  color: green
+inputs:
+  version:
+    description: 'Version of ko to install (tip, latest-release, v0.18.1, etc.)'
+    required: true
+    default: 'latest-release'
+  use-sudo:
+    description: 'set to true if install-dir location requires sudo privs'
+    required: false
+    default: 'false'
+runs:
+  using: "composite"
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - shell: bash
+      env:
+        KO_VERSION: ${{ inputs.version }}
+        USE_SUDO: ${{ inputs.use-sudo }}
+        GH_TOKEN: ${{ github.token }}
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        set -ex
+
+        SUDO=
+        if [[ "${USE_SUDO}" == "true" ]] && command -v sudo >/dev/null; then
+          SUDO=sudo
+        fi
+
+        # Install ko:
+        # - if version is "tip", install from tip of main.
+        # - if version is "latest-release", look up latest release.
+        # - otherwise, install the specified version.
+        case "${KO_VERSION}" in
+        tip)
+          echo "Installing ko using go install"
+          go install github.com/google/ko@main
+          ;;
+        latest-release)
+          tag=$(curl -L -s -u "username:${GH_TOKEN}" https://api.github.com/repos/ko-build/ko/releases/latest | jq -r '.tag_name')
+          ;;
+        *)
+          tag="${KO_VERSION}"
+        esac
+
+        os="${RUNNER_OS}"
+        arch=$(echo "${RUNNER_ARCH}" | tr '[:upper:]' '[:lower:]')
+        if [[ "$os" == "macOS" ]]; then
+          os="Darwin"
+        fi
+        if [[ "$arch" == "x64" ]]; then
+          arch="x86_64"
+        fi
+        if [[ ! -z ${tag} ]]; then
+          echo "Installing ko @ ${tag} for ${os} ${arch}"
+          curl -fsL "https://github.com/ko-build/ko/releases/download/${tag}/ko_${tag:1}_${os}_${arch}.tar.gz" | $SUDO tar xzf - -C /usr/local/bin ko
+        fi
+
+        if [[ ! -z ${KO_DOCKER_REPO} ]]; then
+          echo "KO_DOCKER_REPO is already set"
+          echo "Skipping login to ghcr.io and passing KO_DOCKER_REPO=${KO_DOCKER_REPO} on to future steps"
+          safe_ko_docker_repo=$(printf '%s' "${KO_DOCKER_REPO}" | tr -d '\n\r')
+          echo "KO_DOCKER_REPO=${safe_ko_docker_repo}" >> "$GITHUB_ENV"
+        else
+          # NB: username doesn't seem to matter.
+          echo "${GH_TOKEN}" | ko login ghcr.io --username "dummy" --password-stdin
+
+          # Set KO_DOCKER_REPO for future steps.
+          # We need to get the repository name in lowercase, otherwise it could fail
+          repo=$(printf '%s' "${GITHUB_REPOSITORY}" | tr -d '\n\r' | tr '[:upper:]' '[:lower:]')
+          ko_docker_repo=$(printf 'ghcr.io/%s' "${repo}")
+          echo "KO_DOCKER_REPO=${ko_docker_repo}"
+          echo "KO_DOCKER_REPO=${ko_docker_repo}" >> "${GITHUB_ENV}"
+        fi

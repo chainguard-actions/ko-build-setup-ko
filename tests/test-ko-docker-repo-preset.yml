@@ -1,0 +1,33 @@
+name: Test KO_DOCKER_REPO already set
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      KO_DOCKER_REPO: my-registry.example.com/myrepo
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: setup-ko
+        uses: .
+        with:
+          version: v0.15.2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KO_DOCKER_REPO: my-registry.example.com/myrepo
+      - name: Assert ko is installed
+        run: |
+          echo "Checking ko is available in PATH..."
+          if ! command -v ko > /dev/null 2>&1; then
+            echo "FAIL: ko not found in PATH"
+            exit 1
+          fi
+          echo "PASS: ko is installed"
+      - name: Assert KO_DOCKER_REPO is preserved
+        run: |
+          echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}"
+          if [ "${KO_DOCKER_REPO}" != "my-registry.example.com/myrepo" ]; then
+            echo "FAIL: expected KO_DOCKER_REPO=my-registry.example.com/myrepo but got: ${KO_DOCKER_REPO}"
+            exit 1
+          fi
+          echo "PASS: KO_DOCKER_REPO is preserved as expected"
