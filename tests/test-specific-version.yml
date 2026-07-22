@@ -9,24 +9,31 @@ jobs:
       - id: setup-ko
         uses: .
         with:
-          version: v0.15.2
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Assert ko is installed
+          version: v0.15.0
+      - name: Assert ko is installed at the correct version
         run: |
-          echo "Checking ko is available in PATH..."
+          echo "Checking ko is on PATH..."
           if ! command -v ko > /dev/null 2>&1; then
-            echo "FAIL: ko not found in PATH"
+            echo "FAIL: ko not found on PATH"
             exit 1
           fi
-          echo "PASS: ko is installed"
-          ko version
-      - name: Assert ko version matches expected
-        run: |
           KO_VER=$(ko version 2>&1 || true)
           echo "ko version output: ${KO_VER}"
-          if ! echo "${KO_VER}" | grep -q "0.15.2"; then
-            echo "FAIL: expected ko version 0.15.2 but got: ${KO_VER}"
+          if echo "${KO_VER}" | grep -q "0.15.0"; then
+            echo "PASS: ko v0.15.0 is installed"
+          else
+            echo "FAIL: expected ko v0.15.0 but got: ${KO_VER}"
             exit 1
           fi
-          echo "PASS: ko version is 0.15.2"
+      - name: Assert KO_DOCKER_REPO is set
+        run: |
+          echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}"
+          if [ -z "${KO_DOCKER_REPO}" ]; then
+            echo "FAIL: KO_DOCKER_REPO is not set"
+            exit 1
+          fi
+          if [[ "${KO_DOCKER_REPO}" != ghcr.io/* ]]; then
+            echo "FAIL: KO_DOCKER_REPO does not start with ghcr.io/"
+            exit 1
+          fi
+          echo "PASS: KO_DOCKER_REPO=${KO_DOCKER_REPO}"

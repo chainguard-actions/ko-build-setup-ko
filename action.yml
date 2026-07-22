@@ -72,16 +72,16 @@ runs:
         if [[ "$arch" == "x64" ]]; then
           arch="x86_64"
         fi
-        if [[ ! -z ${tag} ]]; then
+        if [[ -n "${tag}" ]]; then
           echo "Installing ko @ ${tag} for ${os} ${arch}"
           curl -fsL "https://github.com/ko-build/ko/releases/download/${tag}/ko_${tag:1}_${os}_${arch}.tar.gz" | $SUDO tar xzf - -C /usr/local/bin ko
         fi
 
-        if [[ ! -z ${KO_DOCKER_REPO} ]]; then
+        if [[ -n "${KO_DOCKER_REPO}" ]]; then
           echo "KO_DOCKER_REPO is already set"
           echo "Skipping login to ghcr.io and passing KO_DOCKER_REPO=${KO_DOCKER_REPO} on to future steps"
           safe_ko_docker_repo=$(printf '%s' "${KO_DOCKER_REPO}" | tr -d '\n\r')
-          echo "KO_DOCKER_REPO=${safe_ko_docker_repo}" >> "$GITHUB_ENV"
+          echo "KO_DOCKER_REPO=${safe_ko_docker_repo}" >> "${GITHUB_ENV}"
         else
           # NB: username doesn't seem to matter.
           echo "${GH_TOKEN}" | ko login ghcr.io --username "dummy" --password-stdin

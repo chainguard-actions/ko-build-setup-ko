@@ -1,15 +1,17 @@
-name: Test basic usage (latest-release)
+name: Test custom KO_DOCKER_REPO (pre-set)
 on:
   workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      KO_DOCKER_REPO: my-custom-registry.example.com/myorg
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - id: setup-ko
         uses: .
         with:
-          version: latest-release
+          version: v0.15.0
       - name: Assert ko is installed
         run: |
           echo "Checking ko is on PATH..."
@@ -19,15 +21,11 @@ jobs:
           fi
           echo "ko version: $(ko version)"
           echo "PASS: ko is installed"
-      - name: Assert KO_DOCKER_REPO is set
+      - name: Assert KO_DOCKER_REPO is preserved
         run: |
           echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}"
-          if [ -z "${KO_DOCKER_REPO}" ]; then
-            echo "FAIL: KO_DOCKER_REPO is not set"
+          if [ "${KO_DOCKER_REPO}" != "my-custom-registry.example.com/myorg" ]; then
+            echo "FAIL: KO_DOCKER_REPO was overwritten, expected 'my-custom-registry.example.com/myorg' but got '${KO_DOCKER_REPO}'"
             exit 1
           fi
-          if [[ "${KO_DOCKER_REPO}" != ghcr.io/* ]]; then
-            echo "FAIL: KO_DOCKER_REPO does not start with ghcr.io/"
-            exit 1
-          fi
-          echo "PASS: KO_DOCKER_REPO=${KO_DOCKER_REPO}"
+          echo "PASS: KO_DOCKER_REPO preserved as ${KO_DOCKER_REPO}"
