@@ -1,0 +1,68 @@
+name: Use Action
+
+on:
+  push:
+    branches:
+      - 'main'
+
+permissions: {}
+
+jobs:
+  use-action:
+    name: Use Action
+
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-latest
+          - ubuntu-latest-arm
+          - macos-latest
+
+    runs-on: ${{ matrix.platform }}
+
+    permissions:
+      packages: write
+
+    steps:
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
+        with:
+          go-version: '1.22'
+          check-latest: 'true'
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Minimal publish
+      - uses: ko-build/setup-ko@b8c95b8733ce397fa7482de3d56ab6b45ccb207f # main
+
+      - run: ko publish --bare ./
+
+      - name: Install specific release
+        uses: ko-build/setup-ko@b8c95b8733ce397fa7482de3d56ab6b45ccb207f # main
+        with:
+          version: v0.16.0
+
+      - name: Check installed version
+        run: ko version | grep 0.16.0
+
+      - name: Install from tip
+        uses: ko-build/setup-ko@b8c95b8733ce397fa7482de3d56ab6b45ccb207f # main
+        with:
+          version: tip
+
+      - name: Check installed version (tip)
+        run: |
+          sudo rm /usr/local/bin/ko # Uninstall previous versions.
+          ko version
+
+      # If KO_DOCKER_REPO is set during setup, it's set for future steps.
+      - name: Pre-set KO_DOCKER_REPO
+        uses: ko-build/setup-ko@b8c95b8733ce397fa7482de3d56ab6b45ccb207f # main
+        env:
+          KO_DOCKER_REPO: already-set
+
+      - name: Check pre-set KO_DOCKER_REPO
+        run: |
+          if [[ "${KO_DOCKER_REPO}" != "already-set" ]]; then
+            echo "${KO_DOCKER_REPO} != already-set"
+            exit 1
+          fi

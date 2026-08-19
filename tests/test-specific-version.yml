@@ -1,0 +1,46 @@
+name: Test specific version install
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: setup-ko
+        uses: .
+        with:
+          version: v0.15.2
+
+      - name: Assert ko is installed
+        run: |
+          echo "Checking ko binary..."
+          if ! command -v ko > /dev/null 2>&1; then
+            echo "FAIL: ko binary not found in PATH"
+            exit 1
+          fi
+          echo "PASS: ko binary found"
+
+      - name: Assert ko version matches expected
+        run: |
+          KO_VERSION=$(ko version 2>&1 || true)
+          echo "ko version output: $KO_VERSION"
+          if echo "$KO_VERSION" | grep -q "0.15.2"; then
+            echo "PASS: ko version matches v0.15.2"
+          else
+            echo "FAIL: expected ko version 0.15.2, got: $KO_VERSION"
+            exit 1
+          fi
+
+      - name: Assert KO_DOCKER_REPO is set
+        run: |
+          echo "KO_DOCKER_REPO: $KO_DOCKER_REPO"
+          if [ -z "$KO_DOCKER_REPO" ]; then
+            echo "FAIL: KO_DOCKER_REPO is not set"
+            exit 1
+          fi
+          if [[ "$KO_DOCKER_REPO" != ghcr.io/* ]]; then
+            echo "FAIL: expected KO_DOCKER_REPO to start with ghcr.io/, got: $KO_DOCKER_REPO"
+            exit 1
+          fi
+          echo "PASS: KO_DOCKER_REPO=$KO_DOCKER_REPO"
