@@ -1,0 +1,35 @@
+name: Test setup-ko with custom KO_DOCKER_REPO
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      KO_DOCKER_REPO: registry.example.com/myorg/myrepo
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        with:
+          version: v0.15.2
+      - name: Assert ko is installed
+        run: |
+          echo "Checking ko binary..."
+          if ! command -v ko &>/dev/null; then
+            echo "FAIL: ko binary not found in PATH"
+            exit 1
+          fi
+          KO_VERSION=$(ko version 2>&1 || true)
+          echo "ko version: $KO_VERSION"
+          echo "PASS: ko is installed"
+      - name: Assert KO_DOCKER_REPO is preserved
+        env:
+          KO_DOCKER_REPO: ${{ env.KO_DOCKER_REPO }}
+        run: |
+          echo "KO_DOCKER_REPO: $KO_DOCKER_REPO"
+          EXPECTED="registry.example.com/myorg/myrepo"
+          if [ "$KO_DOCKER_REPO" != "$EXPECTED" ]; then
+            echo "FAIL: expected KO_DOCKER_REPO='$EXPECTED' but got '$KO_DOCKER_REPO'"
+            exit 1
+          fi
+          echo "PASS: KO_DOCKER_REPO is preserved as '$KO_DOCKER_REPO'"
