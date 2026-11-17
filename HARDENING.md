@@ -4,66 +4,167 @@
 
 > This file was generated automatically by the hardening agent.
 
-**Policy SHA:** `d636be7e43ef829af6e853da6b3c7566db9f72fe`
+**Policy SHA:** `374911c4be584df24e6da57af2d990570ef0f859`
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
 **Harden Agent Version:** `2`
 
-Action **ko-build--setup-ko/v0.10** was hardened automatically. 4 finding(s) were identified and resolved across 2 iteration(s).
+Action **ko-build--setup-ko/v0.10** was hardened automatically. 3 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
-### script-injection (severity: high)
-
-Sub-rule (b): The env var KO_VERSION (sourced from `${{ inputs.version }}`, a user-controlled input) is expanded unquoted in a `case` statement: `case ${KO_VERSION} in`. An unquoted shell expansion allows an attacker to inject shell metacharacters (`;`, `|`, `&`, etc.) via the `version` input. It should be `case "${KO_VERSION}" in`.
-
-Locations:
-
-- `action.yml:36`
-
 ### github-env-injection (severity: high)
 
-The inherited process env var `KO_DOCKER_REPO` (set by the calling workflow — untrusted) is written directly to `$GITHUB_ENV` without sanitization: `echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}" >> $GITHUB_ENV`. A newline in the value would allow an attacker to inject arbitrary environment variables into subsequent steps. The required sanitization step (`printf '%s' "$KO_DOCKER_REPO" | tr -d '\n\r'`) is missing before the write.
+The composite step copies the inherited, workflow-controlled env var KO_DOCKER_REPO into $GITHUB_ENV without stripping newlines first: `echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}" >> $GITHUB_ENV`. If the value contains a newline, it can add any other environment variable to later steps. Fix: before the write, run safe=$(printf '%s' "$KO_DOCKER_REPO" | tr -d '\n\r'), then write "KO_DOCKER_REPO=$safe" >> "$GITHUB_ENV".
 
 Locations:
 
+- `action.yml:66`
+
+### script-injection (severity: high)
+
+Rule (b): workflow-controlled env vars are expanded without double quotes in the run block. Examples: `case ${KO_VERSION} in` (line 38; KO_VERSION comes from inputs.version), `if [[ ! -z ${tag} ]]; then` (line 58; tag comes from inputs.version), and `if [[ ! -z ${KO_DOCKER_REPO} ]]; then` (line 63; KO_DOCKER_REPO is inherited from the calling workflow). Quote each one: "${KO_VERSION}", "${tag}", "${KO_DOCKER_REPO}".
+
+Locations:
+
+- `action.yml:38`
 - `action.yml:58`
+- `action.yml:63`
 
-### unpinned-uses (severity: high)
+### prior-fix (severity: high)
 
-Four `uses:` references in use-action.yaml point to `ko-build/setup-ko@main`, which is a mutable branch ref rather than an immutable 40-character commit SHA. This exposes the workflow to supply-chain attacks if the `main` branch is compromised. All four occurrences (lines 30, 35, 42, 51) must be pinned to a full SHA (e.g. `ko-build/setup-ko@<40-char-sha> # vX.Y.Z`).
+Carried forward from this version's previous harden, which fixed it; fix it again unless the code no longer has the problem. The previous harden changed action.yml without recording a finding for it, and this analysis reported nothing there. Re-apply its security changes unless the code no longer needs them. The previous patch:
+```diff
+diff --git a/action.yml b/action.yml
+index 347e265..a93a2c6 100644
+--- a/action.yml
++++ b/action.yml
+@@ -15,63 +15,81 @@ inputs:
+ runs:
+   using: "composite"
+   steps:
+-  - shell: bash
+-    env:
+-      KO_VERSION: ${{ inputs.version }}
+-      USE_SUDO: ${{ inputs.use-sudo }}
+-      GH_TOKEN: ${{ github.token }}
+-      RUNNER_OS: ${{ runner.os }}
+-      RUNNER_ARCH: ${{ runner.arch }}
+-      GITHUB_REPOSITORY: ${{ github.repository }}
+-    run: |
+-      set -ex
++    - shell: bash
++      env:
++        KO_VERSION: ${{ inputs.version }}
++        USE_SUDO: ${{ inputs.use-sudo }}
++        GH_TOKEN: ${{ github.token }}
++        RUNNER_OS: ${{ runner.os }}
++        RUNNER_ARCH: ${{ runner.arch }}
++        GITHUB_REPOSITORY: ${{ github.repository }}
++      run: |
++        set -ex
+ 
+-      SUDO=
+-      if [[ "${USE_SUDO}" == "true" ]] && command -v sudo >/dev/null; then
+-        SUDO=sudo
+-      fi
++        SUDO=
++        if [[ "${USE_SUDO}" == "true" ]] && command -v sudo >/dev/null; then
++          SUDO=sudo
++        fi
+ 
+-      # Install ko:
+-      # - if version is "tip", install from tip of main.
+-      # - if version is "latest-release", look up latest release.
+-      # - otherwise, install the specified version.
+-      case ${KO_VERSION} in
+-      tip)
+-        echo "Installing ko using go install"
+-        go install github.com/google/ko@main
+-        ;;
+-      latest-release)
+-        tag=$(curl -L -s -u "username:${GH_TOKEN}" https://api.github.com/repos/ko-build/ko/releases/latest | jq -r '.tag_name')
+-        ;;
+-      *)
+-        tag="${KO_VERSION}"
+-      esac
++        # Install ko:
++        # - if version is "tip", install from tip of main.
++        # - if version is "latest-release", look up latest release.
++        # - otherwise, install the specified version.
++        case "${KO_VERSION}" in
++        tip)
++          echo "Installing ko using go install"
++          go install github.com/google/ko@main
++          ;;
++        latest-release)
++          tag=$(curl -L -s -u "username:${GH_TOKEN}" https://api.github.com/repos/ko-build/ko/releases/latest | jq -r '.tag_name')
++          ;;
++        *)
++          tag="${KO_VERSION}"
++        esac
+ 
+-      os="${RUNNER_OS}"
+-      arch=$(echo "${RUNNER_ARCH}" | tr '[:upper:]' '[:lower:]')
+-      if [[ $os == "macOS" ]]; then
+-        os="Darwin"
+-      fi
+-      if [[ $arch == "x64" ]]; then
+-        arch="x86_64"
+-      fi
+-      if [[ ! -z ${tag} ]]; then
+-        echo "Installing ko @ ${tag} for ${os} ${arch}"
+-        curl -fsL "https://github.com/ko-build/ko/releases/download/${tag}/ko_${tag:1}_${os}_${arch}.tar.gz" | $SUDO tar xzf - -C /usr/local/bin ko
+-      fi
++        os="${RUNNER_OS}"
++        arch=$(echo "${RUNNER_ARCH}" | tr '[:upper:]' '[:lower:]')
++        if [[ "$os" == "macOS" ]]; then
++          os="Darwin"
++        fi
++        if [[ "$arch" == "x64" ]]; then
++          arch="x86_64"
++        fi
++        if [[ -n "${tag}" ]]; then
++          echo "Installing ko @ ${tag} for ${os} ${arch}"
++          curl -fsL "https://github.com/ko-build/ko/releases/download/${tag}/ko_${tag:1}_${os}_${arch}.tar.gz" | $SUDO tar xzf - -C /usr/local/bin ko
++        fi
+ 
+-      if [[ ! -z ${KO_DOCKER_REPO} ]]; then
+-        echo "KO_DOCKER_REPO is already set"
+-        echo "Skipping login to ghcr.io and passing KO_DOCKER_REPO=${KO_DOCKER_REPO} on to future steps"
+-        echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}" >> $GITHUB_ENV
+-      else
+-        # NB: username doesn't seem to matter.
+-        echo "${GH_TOKEN}" | ko login ghcr.io --username "dummy" --password-stdin
++        if [[ -n "${KO_DOCKER_REPO}" ]]; then
++          echo "KO_DOCKER_REPO is already set"
++          echo "Skipping login to ghcr.io and passing KO_DOCKER_REPO=${KO_DOCKER_REPO} on to future steps"
++          safe_ko_docker_repo=$(printf '%s' "${KO_DOCKER_REPO}" | tr -d '\n\r')
++          echo "KO_DOCKER_REPO=${safe_ko_docker_repo}" >> "${GITHUB_ENV}"
++        else
++          # NB: username doesn't seem to matter.
++          echo "${GH_TOKEN}" | ko login ghcr.io --username "dummy" --password-stdin
+ 
+-       
+... (truncated)
+```
 
 Locations:
 
-- `.github/workflows/use-action.yaml:30`
-- `.github/workflows/use-action.yaml:35`
-- `.github/workflows/use-action.yaml:42`
-- `.github/workflows/use-action.yaml:51`
-
-### missing-permissions (severity: medium)
-
-The workflow file use-action.yaml has no top-level `permissions:` key and the single job `use-action` also has no `permissions:` key. Without explicit permissions, the workflow inherits the repository default (typically `contents: write` for push-triggered workflows), granting broader access than necessary. A minimal `permissions:` block (e.g. `contents: read`) should be added.
-
-Locations:
-
-- `.github/workflows/use-action.yaml:1`
+- `action.yml`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection, unpinned-uses, missing-permissions
+**Fixes applied:** github-env-injection, script-injection, prior-fix
 
 **Notes:**
 
-Fixed all four findings: (1) Quoted ${KO_VERSION} in the case statement in action.yml to prevent shell metacharacter injection; (2) Added sanitization of KO_DOCKER_REPO via `printf '%s' "${KO_DOCKER_REPO}" | tr -d '\n\r'` before writing to $GITHUB_ENV to prevent newline injection; (3) Pinned all four `ko-build/setup-ko@main` references in use-action.yaml to the full commit SHA `b8c95b8733ce397fa7482de3d56ab6b45ccb207f # main`; (4) Added `permissions: contents: read` top-level block to use-action.yaml.
+I fixed all three findings in action.yml. Nothing was run or tested.
 
-### Iteration 2
-
-**Fixes applied:** script-injection
-
-**Notes:**
-
-Fixed four unquoted shell variable expansions in action.yml that could allow shell metacharacter injection: (1) `$os` in `[[ $os == "macOS" ]]` → `[[ "$os" == "macOS" ]]`; (2) `$arch` in `[[ $arch == "x64" ]]` → `[[ "$arch" == "x64" ]]`; (3) `${tag}` in `[[ ! -z ${tag} ]]` → `[[ -n "${tag}" ]]`; (4) `${KO_DOCKER_REPO}` in `[[ ! -z ${KO_DOCKER_REPO} ]]` → `[[ -n "${KO_DOCKER_REPO}" ]]`. Also replaced the deprecated `! -z` form with the idiomatic `-n` test.
+- **github-env-injection:** when `KO_DOCKER_REPO` is already set, the step now removes newline and carriage-return characters from it (`printf '%s' | tr -d '\n\r'`) before writing it to `$GITHUB_ENV`. The `$GITHUB_ENV` path is now quoted too.
+- **script-injection:** I added double quotes to the variables the step left unquoted: `KO_VERSION` in the `case` statement, `os` and `arch` in their comparisons, and `tag` and `KO_DOCKER_REPO` in their emptiness checks. I also changed `! -z` to the equivalent `-n` in those two checks.
+- **prior-fix:** the earlier patch made the same changes as the two fixes above, plus a re-indent of the step, which I didn't redo. Its diff was cut off partway through. The part I couldn't see covers the other branch, which builds `KO_DOCKER_REPO` from the repository name. That branch already strips newlines and quotes its variables in the current file, so I left it alone.
 
