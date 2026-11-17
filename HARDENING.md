@@ -4,67 +4,40 @@
 
 > This file was generated automatically by the hardening agent.
 
-**Policy SHA:** `d636be7e43ef829af6e853da6b3c7566db9f72fe`
+**Policy SHA:** `374911c4be584df24e6da57af2d990570ef0f859`
 
 **Test Policy SHA:** `843adf9e4b8f85d0c08b27b9d0b09dd094b54702`
 
 **Harden Agent Version:** `2`
 
-Action **ko-build--setup-ko/v0.8** was hardened automatically. 6 finding(s) were identified and resolved across 2 iteration(s).
+Action **ko-build--setup-ko/v0.8** was hardened automatically. 5 finding(s) were identified and resolved across 1 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-action.yml contains multiple direct ${{ }} expression interpolations inside a run: shell block, violating sub-rule (a). Attacker-controlled and template-substituted values are injected directly into shell commands before the shell ever sees them:
-- Line 22: `case ${{ inputs.version }} in` — unquoted, attacker-controlled input used as a case pattern
-- Line 29: `tag="${{ inputs.version }}"` — attacker-controlled input assigned to shell variable
-- Line 32: `os=${{ runner.os }}` — expression interpolated unquoted into shell
-- Line 33: `arch=$(echo "${{ runner.arch }}" | tr ...)` — expression inside command substitution
-- Line 43: `echo "${{ github.token }}" | ko login ...` — token expression in run block
-- Line 47: `repo=$(echo "${{ github.repository }}" | tr ...)` — expression inside command substitution
-All of these should be moved to env: variables and referenced as shell variables (e.g. $INPUTS_VERSION, $RUNNER_OS) instead.
+Rule (a): the composite run step puts GitHub expressions straight into the shell script: `case ${{ inputs.version }} in` (line 22), `tag=$(curl -L -s -u "username:${{ github.token }}" ...)` (line 28), `tag="${{ inputs.version }}"` (line 31), `os=${{ runner.os }}` (line 34), `arch=$(echo "${{ runner.arch }}" ...)` (line 35), `echo "${{ github.token }}" | ko login ...` (line 53) and `repo=$(echo "${{ github.repository }}" ...)` (line 57). Rule (b): variables holding workflow-controlled data are expanded without quotes, e.g. `if [[ ! -z ${KO_DOCKER_REPO} ]]` (line 47) and `curl -fsL https://github.com/ko-build/ko/releases/download/${tag}/ko_${tag:1}_${os}_${arch}.tar.gz` (line 44), where tag comes from inputs.version. Fix: pass each value in through an env: block and wrap every expansion in double quotes.
 
 Locations:
 
 - `action.yml:22`
-- `action.yml:29`
-- `action.yml:32`
-- `action.yml:33`
-- `action.yml:43`
+- `action.yml:28`
+- `action.yml:31`
+- `action.yml:34`
+- `action.yml:35`
+- `action.yml:44`
 - `action.yml:47`
+- `action.yml:53`
+- `action.yml:57`
 
 ### github-env-injection (severity: high)
 
-action.yml writes untrusted values to $GITHUB_ENV without sanitization (no `printf '%s' ... | tr -d '\n\r'` step):
-1. The inherited process env var `KO_DOCKER_REPO` (set by the calling workflow and therefore workflow-controlled/untrusted) is written directly: `echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}" >> $GITHUB_ENV` — a newline in KO_DOCKER_REPO could inject arbitrary environment variables.
-2. The value derived from `${{ github.repository }}` (stored in shell variable `repo`) is written directly: `echo "KO_DOCKER_REPO=ghcr.io/${repo}" >> $GITHUB_ENV` — without sanitization, a crafted repository name containing a newline could inject additional entries into GITHUB_ENV.
-Both writes require the sanitization pattern: `safe=$(printf '%s' "$VAR" | tr -d '\n\r')` before the write.
+The composite step writes untrusted values to $GITHUB_ENV without first running them through `printf '%s' ... | tr -d '\n\r'`. Line 50 copies the inherited env var KO_DOCKER_REPO, which the calling workflow controls: `echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}" >> $GITHUB_ENV`. Line 59 writes a value built from github.repository: `echo "KO_DOCKER_REPO=ghcr.io/${repo}" >> $GITHUB_ENV`. A newline in either value would let it inject extra environment variables.
 
 Locations:
 
-- `action.yml:40`
-- `action.yml:48`
-
-### unpinned-uses (severity: high)
-
-The workflow file use-action.yaml references `ko-build/setup-ko@main` four times. `@main` is a mutable branch ref, not a pinned 40-character commit SHA. This means the action can be silently updated (or compromised) without the workflow noticing, enabling supply-chain attacks. All four occurrences should be pinned to a full SHA digest (e.g. `ko-build/setup-ko@<40-hex-sha> # vX.Y.Z`).
-
-Locations:
-
-- `.github/workflows/use-action.yaml:21`
-- `.github/workflows/use-action.yaml:27`
-- `.github/workflows/use-action.yaml:34`
-- `.github/workflows/use-action.yaml:41`
-
-### missing-permissions (severity: medium)
-
-Neither workflow file defines a `permissions:` block at the top level or at the job level. Without explicit permissions, GitHub Actions grants the default token permissions (which may include write access to contents, packages, etc. depending on repository settings). Both ci.yaml and use-action.yaml should declare minimal required permissions (e.g. `permissions: read-all` or specific scopes) to follow the principle of least privilege.
-
-Locations:
-
-- `.github/workflows/ci.yaml:1`
-- `.github/workflows/use-action.yaml:1`
+- `action.yml:50`
+- `action.yml:59`
 
 ### static-inline-injection (severity: high)
 
@@ -82,31 +55,126 @@ Locations:
 
 - `action.yml:31`
 
+### prior-fix (severity: high)
+
+Carried forward from this version's previous harden, which fixed it; fix it again unless the code no longer has the problem. The previous harden changed action.yml without recording a finding for it, and this analysis reported nothing there. Re-apply its security changes unless the code no longer needs them. The previous patch:
+```diff
+diff --git a/action.yml b/action.yml
+index df238bc..e1adaf3 100644
+--- a/action.yml
++++ b/action.yml
+@@ -11,50 +11,74 @@ inputs:
+ runs:
+   using: "composite"
+   steps:
+-  - shell: bash
+-    run: |
+-      set -ex
++    - shell: bash
++      env:
++        INPUTS_VERSION: ${{ inputs.version }}
++        GITHUB_TOKEN: ${{ github.token }}
++        RUNNER_OS_INPUT: ${{ runner.os }}
++        RUNNER_ARCH_INPUT: ${{ runner.arch }}
++        GITHUB_REPOSITORY_INPUT: ${{ github.repository }}
++      run: |
++        set -ex
+ 
+-      # Install ko:
+-      # - if version is "tip", install from tip of main.
+-      # - if version is "latest-release", look up latest release.
+-      # - otherwise, install the specified version.
+-      case ${{ inputs.version }} in
+-      tip)
+-        echo "Installing ko using go install"
+-        go install github.com/google/ko@main
+-        ;;
+-      latest-release)
+-        tag=$(curl -L -s -u "username:${{ github.token }}" https://api.github.com/repos/ko-build/ko/releases/latest | jq -r '.tag_name')
+-        ;;
+-      *)
+-        tag="${{ inputs.version }}"
+-      esac
++        # Install ko:
++        # - if version is "tip", install from tip of main.
++        # - if version is "latest-release", look up latest release.
++        # - otherwise, install the specified version.
++        case "$INPUTS_VERSION" in
++        tip)
++          echo "Installing ko using go install"
++          go install github.com/google/ko@main
++          ;;
++        latest-release)
++          tag=$(curl -L -s -u "username:${GITHUB_TOKEN}" https://api.github.com/repos/ko-build/ko/releases/latest | jq -r '.tag_name')
++          ;;
++        *)
++          tag="$INPUTS_VERSION"
++        esac
+ 
+-      os=${{ runner.os }}
+-      arch=$(echo "${{ runner.arch }}" | tr '[:upper:]' '[:lower:]')
+-      if [[ $os == "macOS" ]]; then
+-        os="Darwin"
+-      fi
+-      if [[ $arch == "x64" ]]; then
+-        arch="x86_64"
+-      fi
+-      if [[ ! -z ${tag} ]]; then
+-        echo "Installing ko @ ${tag} for ${os} ${arch}"
+-        curl -fsL https://github.com/ko-build/ko/releases/download/${tag}/ko_${tag:1}_${os}_${arch}.tar.gz | tar xzf - -C /usr/local/bin ko
+-      fi
++        os=$RUNNER_OS_INPUT
++        arch=$(echo "$RUNNER_ARCH_INPUT" | tr '[:upper:]' '[:lower:]')
++        if [[ $os == "macOS" ]]; then
++          os="Darwin"
++        fi
++        if [[ $arch == "x64" ]]; then
++          arch="x86_64"
++        fi
++        if [[ ! -z ${tag} ]]; then
++          echo "Installing ko @ ${tag} for ${os} ${arch}"
++          curl -fsL "https://github.com/ko-build/ko/releases/download/${tag}/ko_${tag:1}_${os}_${arch}.tar.gz" | tar xzf - -C /usr/local/bin ko
++        fi
+ 
+-      if [[ ! -z ${KO_DOCKER_REPO} ]]; then
+-        echo "KO_DOCKER_REPO is already set"
+-        echo "Skipping login to ghcr.io and passing KO_DOCKER_REPO=${KO_DOCKER_REPO} on to future steps"
+-        echo "KO_DOCKER_REPO=${KO_DOCKER_REPO}" >> $GITHUB_ENV
+-      else
+-        # NB: username doesn't seem to matter.
+-        echo "${{ github.token }}" | ko login ghcr.io --username "dummy" --password-stdin
++        if [[ ! -z ${KO_DOCKER_REPO} ]]; then
++          echo "KO_DOCKER_REPO is already set"
++          echo "Skipping login to ghcr.io and passing KO_DOCKER_REPO=${KO_DOCKER_REPO} on to future steps"
++          safe_ko_docker_repo=$(printf '%s' "${KO_DOCKER_REPO}" | tr -d '\n\r')
++          echo "KO_DOCKER_REPO=${safe_ko_docker_repo}" >> "$GITHUB_ENV"
++        else
++          # NB: username doesn't seem to matter.
++          echo "${GITHUB_TOKEN}" | ko login ghcr.io --username "dummy" --password-stdin
+ 
+-        # Set KO_DOCKER_REPO for future steps.
+-        # We need to get the repository name in lowercase, otherwise it could fail
+-        repo=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+-        echo "KO_DOCKER_REPO=ghcr.io/${repo}"
+-        echo "KO_DOCKER_REPO=ghcr.io/${repo}" >> $GITHUB_ENV
+-      fi
++          # Set KO_DOCKER_REPO for future steps.
++          # We need to get the repository name in lowercase, otherwise it could fail
++          repo=$(prin
+... (truncated)
+```
+
+Locations:
+
+- `action.yml`
+
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection, unpinned-uses, missing-permissions, static-inline-injection
+**Fixes applied:** script-injection, github-env-injection, static-inline-injection, prior-fix
 
 **Notes:**
 
-Fixed all findings in action.yml, .github/workflows/use-action.yaml, and .github/workflows/ci.yaml:
-
-1. action.yml - script-injection/static-inline-injection: Moved all ${{ }} expressions (${{ inputs.version }}, ${{ github.token }}, ${{ runner.os }}, ${{ runner.arch }}, ${{ github.repository }}) out of the run: shell block into an env: map. Shell script now uses $INPUTS_VERSION, $GITHUB_TOKEN, $RUNNER_OS_INPUT, $RUNNER_ARCH_INPUT, $GITHUB_REPOSITORY_INPUT.
-
-2. action.yml - github-env-injection: Sanitized both GITHUB_ENV writes with tr -d '\n\r': KO_DOCKER_REPO from environment is sanitized via safe_ko_docker_repo variable; repo derived from github.repository is sanitized inline in the pipeline.
-
-3. use-action.yaml - unpinned-uses: All four ko-build/setup-ko@main references pinned to full SHA b8c95b8733ce397fa7482de3d56ab6b45ccb207f # main.
-
-4. ci.yaml and use-action.yaml - missing-permissions: Added permissions: { contents: read, packages: write } to both workflow files (packages: write needed for ko to push images to ghcr.io).
-
-### Iteration 2
-
-**Fixes applied:** script-injection
-
-**Notes:**
-
-Fixed two script injection vulnerabilities in action.yml:
-1. Quoted `$INPUTS_VERSION` in the `case` statement (line 29): changed `case $INPUTS_VERSION in` to `case "$INPUTS_VERSION" in` to prevent word splitting and glob expansion on the user-controlled version input.
-2. Quoted the curl URL (line 51): wrapped the URL containing `${tag}`, `${tag:1}`, `${os}`, and `${arch}` in double quotes to prevent word splitting and glob expansion on those variables.
+Moved every ${{ }} expression in action.yml (inputs.version, github.token, runner.os, runner.arch, github.repository) into the step's env: block. The token goes in as SETUP_KO_TOKEN rather than GITHUB_TOKEN, so tools the step runs don't pick up a variable they didn't get before. Variable expansions are now double-quoted, including the download URL and the KO_DOCKER_REPO check. Newlines are stripped from KO_DOCKER_REPO and from the lowercased repository name before either is written to $GITHUB_ENV, and $GITHUB_ENV is quoted. The install and login logic is otherwise unchanged. This also covers the prior-fix finding, since it re-applies what the previous harden did.
 
